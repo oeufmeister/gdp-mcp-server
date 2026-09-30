@@ -8,6 +8,10 @@ from typing import Any
 
 from .client import GDPClient
 
+# Bundled static catalog — used when live discovery times out and no cache exists.
+# Built from the IBM Guardium API A-Z reference docs + probe-verified endpoints.
+_STATIC_CATALOG_PATH = Path(__file__).parent / "static_catalog.json"
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,10 +75,13 @@ class GDPDiscovery:
             )
             return len(self.endpoints)
 
-        # Try live discovery
+        # Try live discovery with a short timeout so slow appliances fail fast
+        import asyncio as _asyncio
         try:
-            data = await self._client.request(
-                "GET", "restapi", {"withParameters": "1"}
+            live_timeout = float(__import__("os").getenv("GDP_DISCOVERY_TIMEOUT", "20"))
+            data = await _asyncio.wait_for(
+                self._client.request("GET", "restapi", {"withParameters": "1"}),
+                timeout=live_timeout,
             )
             if isinstance(data, list) and len(data) > 0:
                 self._index(data)
@@ -87,6 +94,11 @@ class GDPDiscovery:
                     len(self._categories),
                 )
                 return len(self.endpoints)
+        except _asyncio.TimeoutError:
+            logger.warning(
+                "Live discovery timed out after %ss — falling back to cache/static catalog",
+                live_timeout,
+            )
         except Exception as exc:
             logger.warning("Live discovery failed (%s), falling back to cache", exc)
 
@@ -98,6 +110,17 @@ class GDPDiscovery:
                 "Loaded %d endpoints from cache (%s)",
                 len(self.endpoints),
                 cache_path.name,
+            )
+            return len(self.endpoints)
+
+        # Last resort: load the bundled static catalog
+        if _STATIC_CATALOG_PATH.exists():
+            data = json.loads(_STATIC_CATALOG_PATH.read_text())
+            self._index(data)
+            logger.warning(
+                "Loaded %d endpoints from bundled static catalog "
+                "(live discovery unavailable — results may be incomplete)",
+                len(self.endpoints),
             )
             return len(self.endpoints)
 
