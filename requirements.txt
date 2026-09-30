@@ -1,0 +1,7 @@
+mcp<2
+httpx
+python-dotenv
+paramiko
+pydantic
+starlette
+uvicorn[standard]
